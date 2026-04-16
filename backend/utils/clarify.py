@@ -1,36 +1,43 @@
 """
-Clarify + extract pipeline, and the underlying LLM helpers it uses.
+LLM helpers shared across the intent pipeline.
 
-Public entrypoint (used by routers/intent_router.py):
-    clarify_and_extract(text, prefs, persona, answers, agent_id, previous_questions)
-        -> (clarification | None, final_text, extracted, embedding)
-
-If clarification is not None, the caller should surface the questions to the
-user and NOT persist anything. Otherwise the caller persists via utils.create.
-
-Side effects this module performs directly (by design — stateful pipeline):
-- Merges newly-inferred preferences / persona into the agent doc via `store`.
+Exports used externally:
+  MODEL                    — model name for all LLM calls
+  extract_intent_structure — fallback structured extraction when router enriched_intent is absent
+  save_preferences         — append inferred preferences to agent doc
+  save_persona             — append inferred persona to agent doc
 """
-import asyncio
 import json
 import os
 from datetime import datetime, timezone
-from pathlib import Path
 
 from openai import AsyncOpenAI
 
 import store
-from embeddings import embed
-from geocode import geocode as geocode_location
 
-MODEL = "gpt-5.4"  # NOTE: hallucinated; all LLM calls fall through to fallbacks until fixed
+MODEL = "gpt-5.4"
 _openai = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
-_LLM = Path(__file__).parent.parent / "llm"
-_CLARIFY_PROMPT = (_LLM / "clarification.txt").read_text().strip()
-_INTENT_PROMPT_TPL = (_LLM / "extract_intent.txt").read_text().strip()
-_PREF_PROMPT = (_LLM / "extract_preference.txt").read_text().strip()
-_PERSONA_PROMPT = (_LLM / "extract_persona.txt").read_text().strip()
+_EXTRACT_DEFAULTS = {
+    "domain": 15, "type": 1, "location_query": "", "radius": 10.0,
+    "time_start": 0, "time_end": 0, "budget_min": 0, "budget_max": 0,
+    "flags": 0, "tags": [],
+}
+
+_INTENT_PROMPT_TPL = """You extract structured fields from a natural language intent.
+Current datetime: {current_datetime}
+
+Return JSON with these fields (use null / 0 / "" for unknowns):
+- location_query: string  — city or neighbourhood for geocoding, empty string if absent
+- radius: number          — search radius in km, default 10
+- budget_min: number      — minimum budget, 0 if absent
+- budget_max: number      — maximum budget, 0 if absent
+- time_start: number      — unix timestamp of earliest acceptable time, 0 if absent
+- time_end: number        — unix timestamp of latest acceptable time, 0 if absent
+- flags: number           — bitmask: 1=urgent, 2=remote_ok; 0 if none apply
+- tags: [string]          — 2-5 short descriptive tags
+- domain: number          — best-fit domain (1=housing,2=dating,3=hiring,4=buying,5=selling,6=activity,7=community,15=other)
+- type: number            — intent direction (1=seeking,2=offering,3=both)"""
 
 
 async def _chat(system: str, user: str, json_mode: bool = False) -> str:
@@ -46,48 +53,8 @@ async def _chat(system: str, user: str, json_mode: bool = False) -> str:
     return (resp.choices[0].message.content or "").strip()
 
 
-# --- Clarification ---------------------------------------------------------
-
-async def check_clarification(text, preferences, persona=None, answers="", previous_questions=None):
-    parts = [f'Intent: "{text}"']
-    if persona:
-        parts.append(f"Who they are: {persona}")
-    if preferences:
-        parts.append(f"Background: {preferences}")
-    if previous_questions and answers:
-        parts.append(f'Previous questions: "{" ".join(previous_questions)}"')
-        parts.append(f'User answered: "{answers}"')
-    elif answers:
-        parts.append(f'User answered: "{answers}"')
-
-    try:
-        response = await _chat(_CLARIFY_PROMPT, "\n".join(parts))
-    except Exception as e:
-        print(f"[clarify] failed: {e}")
-        return {"acknowledgements": [], "questions": []}
-
-    if not response or response.lower().startswith("(empty"):
-        return {"acknowledgements": [], "questions": []}
-
-    acks, qs = [], []
-    for line in response.splitlines():
-        line = line.strip()
-        if not line or line.lower().startswith("(empty"):
-            continue
-        (qs if line.endswith("?") else acks).append(line)
-    return {"acknowledgements": acks, "questions": qs}
-
-
-# --- Structured intent / preferences / persona ----------------------------
-
-_EXTRACT_DEFAULTS = {
-    "domain": 15, "type": 1, "location_query": "", "radius": 10.0,
-    "time_start": 0, "time_end": 0, "budget_min": 0, "budget_max": 0,
-    "flags": 0, "tags": [],
-}
-
-
-async def extract_intent_structure(text, preferences):
+async def extract_intent_structure(text: str, preferences: str) -> dict:
+    """Fallback structured extraction — used when router enriched_intent is absent."""
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     system = _INTENT_PROMPT_TPL.replace("{current_datetime}", now_str)
     parts = [f'Intent: "{text}"']
@@ -100,40 +67,6 @@ async def extract_intent_structure(text, preferences):
         print(f"[extract_intent] failed: {e}")
         return dict(_EXTRACT_DEFAULTS)
 
-
-async def extract_preferences(text) -> str:
-    try:
-        resp = await _chat(_PREF_PROMPT, text)
-        return resp.strip()
-    except Exception as e:
-        print(f"[extract_pref] failed: {e}")
-        return ""
-
-
-async def extract_persona(text) -> str:
-    try:
-        resp = await _chat(_PERSONA_PROMPT, text)
-        return resp.strip()
-    except Exception as e:
-        print(f"[extract_persona] failed: {e}")
-        return ""
-
-
-# --- Geocoding -------------------------------------------------------------
-
-async def maybe_geocode(extracted):
-    loc = extracted.get("location_query", "")
-    if not loc or extracted.get("radius", 10.0) == 0.0:
-        return extracted
-    try:
-        lat, lng = await geocode_location(loc)
-        return {**extracted, "lat": lat, "lng": lng}
-    except Exception as e:
-        print(f"[geocode] failed for '{loc}': {e}")
-        return extracted
-
-
-# --- Agent mutations ------------------------------------------------------
 
 async def save_preferences(agent_id: str, new_pref: str) -> None:
     if not new_pref:
@@ -161,27 +94,68 @@ async def save_persona(agent_id: str, new_persona: str) -> None:
     await store.update_agent(agent_id, mutate)
 
 
-# --- Main pipeline ---------------------------------------------------------
+_PERSONA_REFRESH_PROMPT = """\
+You maintain a concise persona profile for a user of Sangam — an anonymous people-matching platform.
 
-async def clarify_and_extract(text, prefs, persona=None, answers="", agent_id="", previous_questions=None):
-    clarification, new_prefs, new_persona = await asyncio.gather(
-        check_clarification(text, prefs, persona, answers, previous_questions),
-        extract_preferences(text),
-        extract_persona(text),
-    )
+Given the user's CURRENT PERSONA and a NEW INTENT they just posted, produce an UPDATED PERSONA.
 
-    if new_prefs and agent_id:
-        await save_preferences(agent_id, new_prefs)
-    if new_persona and agent_id:
-        await save_persona(agent_id, new_persona)
+Rules:
+1. Merge, don't append. Never repeat a fact already in the current persona.
+2. Capture stable facts: home city/neighbourhood, lifestyle (dietary, smoking), recurring interests,
+   typical budget range, work style, domains they frequently engage in.
+3. If the new intent reveals new stable info not in the current persona, add it.
+4. If the new intent confirms existing info, keep it unchanged — do not duplicate.
+5. If the new intent contradicts existing info (e.g. different city), update to the newer value.
+6. Drop ephemeral details: urgency, specific one-off dates, transient locations ("near me").
+7. Output 1–3 concise sentences. Plain text only. No headers, no bullets, no JSON.
+8. If the current persona is empty, derive a fresh persona from the new intent alone.
+9. If the intent reveals nothing new or stable, return the current persona unchanged.
 
-    if clarification["questions"]:
-        return clarification, None, None, None
+Examples of what to capture:
+  "Lives and works in Koramangala, Bangalore. Vegetarian and non-smoker. Typically looks for flatmates in the 12–15k/month range."
+  "Based in HSR Layout, Bangalore. Works from home. Interested in weekend hikes and tech community events."
+"""
 
-    final_text = f"{text} — {answers}" if answers else text
-    extracted, embedding = await asyncio.gather(
-        extract_intent_structure(final_text, prefs),
-        embed(final_text),
-    )
-    extracted = await maybe_geocode(extracted)
-    return None, final_text, extracted, embedding
+
+async def refresh_persona(agent_id: str, intent_text: str, extracted: dict) -> None:
+    """Synthesize current persona + new intent into an updated persona and persist it."""
+    agent = store.get_agent(agent_id)
+    if not agent:
+        return
+
+    current_persona = (agent.get("persona") or "").strip()
+
+    intent_summary = {
+        "text": intent_text[:400],
+        "intent_type": extracted.get("intent_type", ""),
+        "location": extracted.get("location_query", ""),
+        "budget_min": extracted.get("budget_min") or None,
+        "budget_max": extracted.get("budget_max") or None,
+        "dietary": extracted.get("dietary"),
+        "smoking": extracted.get("smoking"),
+        "tags": (extracted.get("tags") or [])[:5],
+    }
+
+    user_msg = json.dumps({
+        "current_persona": current_persona or None,
+        "new_intent": intent_summary,
+    }, ensure_ascii=False)
+
+    try:
+        updated = await _chat(_PERSONA_REFRESH_PROMPT, user_msg)
+        updated = updated.strip()
+    except Exception as e:
+        print(f"[refresh_persona] LLM failed: {e}")
+        return
+
+    if not updated or updated == current_persona:
+        return
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    def mutate(a):
+        a["persona"] = updated
+        a["updated_at"] = now
+
+    await store.update_agent(agent_id, mutate)
+    print(f"[persona] updated for {agent_id}: {updated[:80]}...")

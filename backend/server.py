@@ -1,8 +1,9 @@
+import uvicorn
 from dotenv import load_dotenv
 load_dotenv()
 
 from contextlib import asynccontextmanager
-
+import uvicorn
 from fastapi import FastAPI
 
 import store
@@ -31,3 +32,6 @@ app.include_router(intent_router.router)
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
