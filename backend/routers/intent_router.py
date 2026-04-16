@@ -64,10 +64,6 @@ async def route_intent(body: dict = Body(...)):
     """
     agent_id = body.get("agent_id")
     text = (body.get("text") or "").strip()
-    answers = (body.get("answers") or "").strip()
-    previous_questions = body.get("previous_questions") or []
-    top_n = int(body.get("top_n", 5))
-    threshold = float(body.get("threshold", 0.7))
 
     if not agent_id:
         raise HTTPException(400, "agent_id is required")
