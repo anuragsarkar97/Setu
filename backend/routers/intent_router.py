@@ -3,33 +3,29 @@ Unified intent router.
 
 Single public endpoint: POST /api/intent/route
 
-Acts as an intelligent dispatcher that decides what the user actually wants:
-  - create a new intent
-  - update an existing intent (new doc written first, old deleted after)
-  - delete an existing intent
-  - clarify — returned when the intended action is create/update but the intent
-    is missing critical details
+Stateless dispatcher. Decides what the user's message really is —
+create, update, delete — and delegates to the operation-specific helpers
+in `utils/`. Clarification is surfaced as its own action when the
+intended operation is create/update but the intent is ambiguous.
 
-The router itself is stateless; side-effects (persona/preference saves, FAISS
-add, interaction logs) happen inside the reused helpers in intents.py /
-matching.py.
-
-Older endpoints in intents.py remain mounted so their helpers can be reused
-and so existing clients keep working.
+All side effects (persona/pref saves, FAISS add, interaction logs) happen
+inside the utils; this file only orchestrates.
 """
 import json
 import os
-import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, Body, HTTPException
 from openai import AsyncOpenAI
 
-import faiss_index
 from db import get_db
-from routers.intents import _MODEL, _run_pipeline  # reuse existing pipeline
+from routers.intents import _MODEL  # reuse configured model
+from utils.clarify import clarify_and_extract
+from utils.create import create_intent
+from utils.delete import delete_intent
+from utils.search import search_matches
+from utils.update import update_intent
 
 load_dotenv()
 
@@ -41,15 +37,15 @@ _ROUTE_ACTION_PROMPT = (_LLM_DIR / "route_action.txt").read_text().strip()
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# LLM action classifier
 # ---------------------------------------------------------------------------
 
 async def _classify_action(
     text: str, existing_intents: list[dict], target_hint: str
 ) -> dict:
     """
-    Ask the LLM which action the user's message represents.
-    Falls back to {'create', '', ''} on any failure so the request still
+    Ask the LLM whether the user's message is a create / update / delete.
+    Falls back to {'create', '', ''} on any failure so the endpoint still
     produces something useful.
     """
     existing_str = "\n".join(
@@ -81,7 +77,6 @@ async def _classify_action(
     target = (parsed.get("target_intent_id") or "").strip()
     reasoning = parsed.get("reasoning", "")
 
-    # Safety: update/delete with an unknown id ⇒ fall back to create
     valid_ids = {i["intent_id"] for i in existing_intents}
     if action in ("update", "delete") and target not in valid_ids:
         return {
@@ -95,56 +90,6 @@ async def _classify_action(
         return {"action": "create", "target_intent_id": "", "reasoning": "fallback: unknown action"}
 
     return {"action": action, "target_intent_id": target, "reasoning": reasoning}
-
-
-async def _delete_intent(intent_id: str, agent_id: str) -> dict:
-    """Delete an intent doc and log on the owning agent."""
-    result = await get_db().intents.delete_one(
-        {"intent_id": intent_id, "agent_id": agent_id}
-    )
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail=f"Intent not found: {intent_id}")
-
-    await get_db().agents.update_one(
-        {"agent_id": agent_id},
-        {"$push": {"interactions": {
-            "event": "intent_deleted",
-            "data": {"intent_id": intent_id},
-            "timestamp": datetime.now(timezone.utc),
-        }}},
-    )
-    return {"intent_id": intent_id, "deleted": True}
-
-
-async def _create_intent_doc(
-    agent_id: str, text: str, extracted: dict, embedding: list[float], prefs: dict,
-) -> dict:
-    """Persist a new intent, add to FAISS, log creation on the agent."""
-    now = datetime.now(timezone.utc)
-    doc = {
-        "intent_id": str(uuid.uuid4()),
-        "agent_id": agent_id,
-        "text": text,
-        "extracted": extracted,
-        "embedding": embedding,
-        "status": "active",
-        "preferences_snapshot": prefs,
-        "created_at": now,
-        "updated_at": now,
-    }
-    await get_db().intents.insert_one(doc)
-    doc.pop("_id", None)
-    faiss_index.add(doc["intent_id"], embedding)
-
-    await get_db().agents.update_one(
-        {"agent_id": agent_id},
-        {"$push": {"interactions": {
-            "event": "intent_created",
-            "data": {"intent_id": doc["intent_id"], "text": doc["text"]},
-            "timestamp": now,
-        }}},
-    )
-    return doc
 
 
 # ---------------------------------------------------------------------------
@@ -168,12 +113,10 @@ async def route_intent(body: dict = Body(...)):
       }
 
     Responses (one of):
-      { "action": "clarify",  "questions": [...], "acknowledgements": [...],
-        "intended_action": "create"|"update", "target_intent_id": "..." }
-      { "action": "created",  "intent": {...}, "matches": [...], "index_used": "..." }
-      { "action": "updated",  "intent": {...}, "replaced_intent_id": "...",
-        "matches": [...], "index_used": "..." }
-      { "action": "deleted",  "intent_id": "..." }
+      { "action": "clarify",  questions, acknowledgements, intended_action, target_intent_id }
+      { "action": "created",  intent, matches, index_used }
+      { "action": "updated",  intent, replaced_intent_id, matches, index_used }
+      { "action": "deleted",  intent_id, deleted }
 
     Every response also includes "reasoning" from the classifier.
     """
@@ -204,16 +147,16 @@ async def route_intent(body: dict = Body(...)):
     target_id = decision["target_intent_id"]
     reasoning = decision["reasoning"]
 
-    # --- delete branch -----------------------------------------------------
+    # --- delete ------------------------------------------------------------
     if action == "delete":
-        out = await _delete_intent(target_id, agent_id)
+        out = await delete_intent(target_id, agent_id)
         return {"action": "deleted", "reasoning": reasoning, **out}
 
-    # --- create / update share the full pipeline ---------------------------
+    # --- create / update share the full clarify→extract→embed pipeline ----
     prefs = agent.get("preferences", {})
     persona = agent.get("persona", {})
 
-    clarification, final_text, extracted, embedding = await _run_pipeline(
+    clarification, final_text, extracted, embedding = await clarify_and_extract(
         text, prefs, persona, answers,
         agent_id=agent_id, previous_questions=previous_questions,
     )
@@ -228,26 +171,24 @@ async def route_intent(body: dict = Body(...)):
             "acknowledgements": clarification["acknowledgements"],
         }
 
-    # Write the new intent first — if the old-doc delete fails later we still
-    # preserve the new state.
-    new_doc = await _create_intent_doc(
-        agent_id, final_text, extracted, embedding, prefs
-    )
-
-    replaced_id = None
+    # Persist
+    replaced_id: str | None = None
     if action == "update":
-        try:
-            await _delete_intent(target_id, agent_id)
-            replaced_id = target_id
-        except HTTPException:
-            # Target already gone — degrade to a plain create silently
+        new_doc, replaced_id = await update_intent(
+            agent_id, target_id, final_text, extracted, embedding, prefs,
+        )
+        if replaced_id is None:
+            # Old doc already gone — treat as plain create for response shape
             action = "create"
+    else:
+        new_doc = await create_intent(
+            agent_id, final_text, extracted, embedding, prefs,
+        )
 
-    # Match against newly written intent
-    from routers.matching import run_match
+    # Match against the new intent
     top_n = int(body.get("top_n", 5))
     threshold = float(body.get("threshold", 0.7))
-    matches, index_used = await run_match(new_doc, top_n, threshold)
+    matches, index_used = await search_matches(new_doc, top_n, threshold)
 
     return {
         "action": "updated" if action == "update" else "created",
