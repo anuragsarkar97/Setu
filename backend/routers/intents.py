@@ -21,7 +21,7 @@ router = APIRouter(prefix="/api/intents", tags=["intents"])
 # --- LLM setup -----------------------------------------------------------
 
 _openai = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
-_MODEL = "gpt-5.4-mini"
+_MODEL = "gpt-5.4"
 _LLM_DIR = Path(__file__).parent.parent / "llm"
 
 _CLARIFICATION_SYSTEM_PROMPT = (_LLM_DIR / "clarification.txt").read_text().strip()
