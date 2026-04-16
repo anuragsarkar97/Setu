@@ -1,0 +1,52 @@
+.env
+**/.env
+*.env
+
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+
+.venv/
+venv/
+env/
+
+node_modules/
+
+*.log
+-e 
+# Environment and credential files
+.env
+.env.*
+*.env
+credentials.json
+*.pem
+*.key
+.credentials
+-e 
+# Environment and credential files
+.env
+.env.*
+*.env
+credentials.json
+*.pem
+*.key
+.credentials
+-e 
+# Environment and credential files
+.env
+.env.*
+*.env
+credentials.json
+*.pem
+*.key
+.credentials
+-e 
+# Environment and credential files
+.env
+.env.*
+*.env
+credentials.json
+*.pem
+*.key
+.credentials
