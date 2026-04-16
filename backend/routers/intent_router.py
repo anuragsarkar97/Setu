@@ -1,158 +1,90 @@
 """
-Unified intent router.
+Single endpoint: POST /api/intent/route
 
-Single public endpoint: POST /api/intent/route
-
-Stateless dispatcher. Decides what the user's message really is —
-create, update, delete — and delegates to the operation-specific helpers
-in `utils/`. Clarification is surfaced as its own action when the
-intended operation is create/update but the intent is ambiguous.
-
-All side effects (persona/pref saves, FAISS add, interaction logs) happen
-inside the utils; this file only orchestrates.
+Stateless dispatcher. LLM decides create vs search; clarification surfaces
+when the "create" path needs more detail.
 """
 import json
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
 from fastapi import APIRouter, Body, HTTPException
 from openai import AsyncOpenAI
 
-from db import get_db
-from routers.intents import _MODEL  # reuse configured model
-from utils.clarify import clarify_and_extract
+import store
+from utils.clarify import MODEL, clarify_and_extract
 from utils.create import create_intent
-from utils.delete import delete_intent
-from utils.search import search_matches
-from utils.update import update_intent
-
-load_dotenv()
+from utils.search import search_by_text, search_by_vector
 
 router = APIRouter(prefix="/api/intent", tags=["intent-router"])
 
 _openai = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
-_LLM_DIR = Path(__file__).parent.parent / "llm"
-_ROUTE_ACTION_PROMPT = (_LLM_DIR / "route_action.txt").read_text().strip()
+_PROMPT = (Path(__file__).parent.parent / "llm" / "route_action.txt").read_text().strip()
 
 
-# ---------------------------------------------------------------------------
-# LLM action classifier
-# ---------------------------------------------------------------------------
-
-async def _classify_action(
-    text: str, existing_intents: list[dict], target_hint: str
-) -> dict:
-    """
-    Ask the LLM whether the user's message is a create / update / delete.
-    Falls back to {'create', '', ''} on any failure so the endpoint still
-    produces something useful.
-    """
-    existing_str = "\n".join(
-        f"- [{i['intent_id']}] \"{i['text']}\""
-        for i in existing_intents
-    ) or "(none)"
-
-    user_msg = (
-        f"User message: \"{text}\"\n"
-        f"Existing intents:\n{existing_str}\n"
-        f"Target hint: \"{target_hint or ''}\""
-    )
-
+async def _classify(text: str) -> dict:
+    """Classify the user's message as create | search. Falls back to 'create' on error."""
     try:
         resp = await _openai.chat.completions.create(
-            model=_MODEL,
+            model=MODEL,
             messages=[
-                {"role": "system", "content": _ROUTE_ACTION_PROMPT},
-                {"role": "user", "content": user_msg},
+                {"role": "system", "content": _PROMPT},
+                {"role": "user", "content": f'User message: "{text}"'},
             ],
             response_format={"type": "json_object"},
         )
         parsed = json.loads(resp.choices[0].message.content or "{}")
     except Exception as e:
-        print(f"[router] classifier failed: {e}")
+        print(f"[router] classify failed: {e}")
         parsed = {}
+    action = parsed.get("action")
+    if action not in ("create", "search"):
+        action = "create"
+    return {"action": action, "reasoning": parsed.get("reasoning", "")}
 
-    action = parsed.get("action", "create")
-    target = (parsed.get("target_intent_id") or "").strip()
-    reasoning = parsed.get("reasoning", "")
-
-    valid_ids = {i["intent_id"] for i in existing_intents}
-    if action in ("update", "delete") and target not in valid_ids:
-        return {
-            "action": "create",
-            "target_intent_id": "",
-            "reasoning": f"fallback to create (invalid target). original: {reasoning}",
-        }
-    if action == "create":
-        target = ""
-    if action not in ("create", "update", "delete"):
-        return {"action": "create", "target_intent_id": "", "reasoning": "fallback: unknown action"}
-
-    return {"action": action, "target_intent_id": target, "reasoning": reasoning}
-
-
-# ---------------------------------------------------------------------------
-# Route
-# ---------------------------------------------------------------------------
 
 @router.post("/route")
 async def route_intent(body: dict = Body(...)):
     """
-    Intelligent single-endpoint router.
-
     Body:
       {
         "agent_id": "...",                  // required
-        "text": "...",                      // required — user's natural-language message
-        "target_intent_id": "...",          // optional hint for update/delete
-        "answers": "...",                   // optional, pass-2 clarification answers
-        "previous_questions": [...],        // optional, pass-2 clarification questions
-        "top_n": 5,                         // optional match limit
-        "threshold": 0.7                    // optional match threshold
+        "text": "...",                      // required
+        "answers": "...",                   // optional — pass-2 clarification answers
+        "previous_questions": [...],        // optional — pass-2 clarification questions
+        "top_n": 5,                         // optional
+        "threshold": 0.7                    // optional
       }
 
     Responses (one of):
-      { "action": "clarify",  questions, acknowledgements, intended_action, target_intent_id }
-      { "action": "created",  intent, matches, index_used }
-      { "action": "updated",  intent, replaced_intent_id, matches, index_used }
-      { "action": "deleted",  intent_id, deleted }
-
-    Every response also includes "reasoning" from the classifier.
+      { "action": "clarify",  questions, acknowledgements }
+      { "action": "created",  intent, matches }
+      { "action": "searched", query, results }
     """
     agent_id = body.get("agent_id")
     text = (body.get("text") or "").strip()
-    target_hint = (body.get("target_intent_id") or "").strip()
     answers = (body.get("answers") or "").strip()
     previous_questions = body.get("previous_questions") or []
+    top_n = int(body.get("top_n", 5))
+    threshold = float(body.get("threshold", 0.7))
 
     if not agent_id:
-        raise HTTPException(status_code=400, detail="agent_id is required")
+        raise HTTPException(400, "agent_id is required")
     if not text:
-        raise HTTPException(status_code=400, detail="text is required")
+        raise HTTPException(400, "text is required")
 
-    agent = await get_db().agents.find_one({"agent_id": agent_id})
+    agent = store.get_agent(agent_id)
     if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
+        raise HTTPException(404, "Agent not found")
 
-    # Compact list of the agent's active intents — classifier context
-    cursor = get_db().intents.find(
-        {"agent_id": agent_id, "status": "active"},
-        {"_id": 0, "intent_id": 1, "text": 1, "created_at": 1},
-    ).sort("created_at", -1)
-    existing_intents = await cursor.to_list(length=50)
+    decision = await _classify(text)
+    action, reasoning = decision["action"], decision["reasoning"]
 
-    decision = await _classify_action(text, existing_intents, target_hint)
-    action = decision["action"]
-    target_id = decision["target_intent_id"]
-    reasoning = decision["reasoning"]
+    if action == "search":
+        results = await search_by_text(text, agent_id, top_n, threshold)
+        return {"action": "searched", "reasoning": reasoning, "query": text, "results": results}
 
-    # --- delete ------------------------------------------------------------
-    if action == "delete":
-        out = await delete_intent(target_id, agent_id)
-        return {"action": "deleted", "reasoning": reasoning, **out}
-
-    # --- create / update share the full clarify→extract→embed pipeline ----
+    # action == "create"
     prefs = agent.get("preferences", {})
     persona = agent.get("persona", {})
 
@@ -160,41 +92,14 @@ async def route_intent(body: dict = Body(...)):
         text, prefs, persona, answers,
         agent_id=agent_id, previous_questions=previous_questions,
     )
-
     if clarification:
         return {
             "action": "clarify",
             "reasoning": reasoning,
-            "intended_action": action,              # "create" or "update"
-            "target_intent_id": target_id or None,
             "questions": clarification["questions"],
             "acknowledgements": clarification["acknowledgements"],
         }
 
-    # Persist
-    replaced_id: str | None = None
-    if action == "update":
-        new_doc, replaced_id = await update_intent(
-            agent_id, target_id, final_text, extracted, embedding, prefs,
-        )
-        if replaced_id is None:
-            # Old doc already gone — treat as plain create for response shape
-            action = "create"
-    else:
-        new_doc = await create_intent(
-            agent_id, final_text, extracted, embedding, prefs,
-        )
-
-    # Match against the new intent
-    top_n = int(body.get("top_n", 5))
-    threshold = float(body.get("threshold", 0.7))
-    matches, index_used = await search_matches(new_doc, top_n, threshold)
-
-    return {
-        "action": "updated" if action == "update" else "created",
-        "reasoning": reasoning,
-        "intent": new_doc,
-        "replaced_intent_id": replaced_id,
-        "matches": matches,
-        "index_used": index_used,
-    }
+    new_doc = await create_intent(agent_id, final_text, extracted, embedding, prefs)
+    matches = search_by_vector(new_doc["embedding"], extracted, agent_id, top_n, threshold)
+    return {"action": "created", "reasoning": reasoning, "intent": new_doc, "matches": matches}

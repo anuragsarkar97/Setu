@@ -1,0 +1,19 @@
+{
+  "agents": {
+    "969b4046-6ca8-4110-ab34-fd6b46e6e829": {
+      "agent_id": "969b4046-6ca8-4110-ab34-fd6b46e6e829",
+      "name": "Alice",
+      "preferences": {
+        "location": {
+          "value": "Koramangala",
+          "note": "mentioned while selling sofa",
+          "updated_at": "2026-04-16T18:46:57.696403+00:00"
+        }
+      },
+      "persona": {},
+      "created_at": "2026-04-16T18:46:53.663202+00:00",
+      "updated_at": "2026-04-16T18:46:57.696403+00:00"
+    }
+  },
+  "intents": {}
+}
