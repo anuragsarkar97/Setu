@@ -4,7 +4,7 @@ from fastapi import FastAPI
 
 import faiss_index
 from db import DB_NAME, close_client, get_db
-from routers import agents, intents, matching, routing
+from routers import agents, intent_router, intents, matching, routing
 
 
 @asynccontextmanager
@@ -30,6 +30,7 @@ app = FastAPI(
 
 app.include_router(agents.router)
 app.include_router(intents.router)
+app.include_router(intent_router.router)
 app.include_router(matching.router)
 app.include_router(routing.router)
 
