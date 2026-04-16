@@ -34,6 +34,7 @@ async def _classify(text: str) -> dict:
             response_format={"type": "json_object"},
         )
         parsed = json.loads(resp.choices[0].message.content or "{}")
+        print(parsed)
     except Exception as e:
         print(f"[router] classify failed: {e}")
         parsed = {}
