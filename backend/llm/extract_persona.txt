@@ -1,60 +1,30 @@
-You extract stable personal facts from a user's text.
+You extract ONE short sentence describing stable personal facts from the user's message — things unlikely to change.
 
-These are things unlikely to change — who the person IS, not what they currently need.
+A persona fact = who the person IS (name, pets, dietary, occupation, home, family, skills, languages, fitness), not what they currently need.
 
-Return a JSON object where each key is a persona category. Return {} if nothing stable and personal can be extracted.
+## Output
 
-## Schema
-
-Only include keys that are clearly present in the text:
-
-{
-  "name":       "<first name or nickname if mentioned>",
-  "birthday":   "<YYYY-MM-DD or 'month day' if year unknown>",
-  "pets":       [{"name": "<pet name>", "type": "<dog/cat/etc>", "breed": "<if mentioned>"}],
-  "occupation": {"role": "<job title or field>", "mode": "<remote/office/hybrid if known>"},
-  "home":       {"type": "<flat/house/PG/etc>", "area": "<neighbourhood or city>", "tenure": "<renting/owning if known>"},
-  "dietary":    "<vegetarian/vegan/non-veg/halal/etc>",
-  "family":     {"status": "<single/married/etc>", "kids": <true/false if known>},
-  "languages":  ["<language>"],
-  "skills":     ["<skill>"],
-  "fitness":    "<active/gym/runner/yoga/sedentary/etc>",
-  "notes":      {"<any other stable personal fact>": "<value>"}
-}
+- ONE plain-English sentence, under 25 words, stating the persona fact(s) you found.
+- If nothing stable is present, return an empty string (no text at all).
+- Never return JSON, bullets, quotes, or explanation.
+- Write naturally. Combine multiple facts into one sentence when present.
 
 ## Rules
 
 - Only extract what is clearly stated or strongly implied. Never guess.
-- "I have a dog named Max" → pets: [{name: "Max", type: "dog"}]
-- "I'm a software engineer working from home" → occupation: {role: "software engineer", mode: "remote"}
-- "I live in a 2BHK in Koramangala" → home: {type: "2BHK", area: "Koramangala"}
-- "I'm vegetarian" → dietary: "vegetarian"
-- "my birthday is April 15" → birthday: "MM-15" (no year assumption)
-- "I have two kids" → family: {kids: true}
-- A one-time activity mention ("going trekking") is NOT a skill or fitness fact.
-- A location mentioned in passing ("send it to Koramangala") is NOT a home fact.
-- Return ONLY valid JSON. No explanation, no markdown, no code fences.
-- If nothing stable and personal is present, return {}.
+- One-off mentions ("going trekking") are not skills or fitness facts.
+- A location mentioned in passing ("send it to Koramangala") is not a home fact.
 
 ## Examples
 
 Input: "I have a Labrador named Max and I'm vegetarian"
-Output: {
-  "pets": [{"name": "Max", "type": "dog", "breed": "Labrador"}],
-  "dietary": "vegetarian"
-}
+→ Has a Labrador named Max and is vegetarian.
 
 Input: "I'm a freelance designer, working remotely, living in a studio in Indiranagar"
-Output: {
-  "occupation": {"role": "freelance designer", "mode": "remote"},
-  "home": {"type": "studio", "area": "Indiranagar"}
-}
+→ Freelance designer, works remotely, lives in a studio in Indiranagar.
 
 Input: "need a plumber this weekend"
-Output: {}
+→ 
 
 Input: "my name is Priya and I speak Tamil and Kannada"
-Output: {
-  "name": "Priya",
-  "languages": ["Tamil", "Kannada"]
-}
+→ Name is Priya; speaks Tamil and Kannada.

@@ -51,9 +51,9 @@ async def _chat(system: str, user: str, json_mode: bool = False) -> str:
 async def check_clarification(text, preferences, persona=None, answers="", previous_questions=None):
     parts = [f'Intent: "{text}"']
     if persona:
-        parts.append(f"Who they are: {json.dumps(persona, default=str)}")
+        parts.append(f"Who they are: {persona}")
     if preferences:
-        parts.append(f"Background: {json.dumps(preferences, default=str)}")
+        parts.append(f"Background: {preferences}")
     if previous_questions and answers:
         parts.append(f'Previous questions: "{" ".join(previous_questions)}"')
         parts.append(f'User answered: "{answers}"')
@@ -92,7 +92,7 @@ async def extract_intent_structure(text, preferences):
     system = _INTENT_PROMPT_TPL.replace("{current_datetime}", now_str)
     parts = [f'Intent: "{text}"']
     if preferences:
-        parts.append(f"Agent background: {json.dumps(preferences, default=str)}")
+        parts.append(f"Agent background: {preferences}")
     try:
         resp = await _chat(system, "\n".join(parts), json_mode=True)
         return {**_EXTRACT_DEFAULTS, **json.loads(resp)}
@@ -101,24 +101,22 @@ async def extract_intent_structure(text, preferences):
         return dict(_EXTRACT_DEFAULTS)
 
 
-async def extract_preferences(text):
+async def extract_preferences(text) -> str:
     try:
-        resp = await _chat(_PREF_PROMPT, text, json_mode=True)
-        parsed = json.loads(resp)
-        return parsed if isinstance(parsed, dict) else {}
+        resp = await _chat(_PREF_PROMPT, text)
+        return resp.strip()
     except Exception as e:
         print(f"[extract_pref] failed: {e}")
-        return {}
+        return ""
 
 
-async def extract_persona(text):
+async def extract_persona(text) -> str:
     try:
-        resp = await _chat(_PERSONA_PROMPT, text, json_mode=True)
-        parsed = json.loads(resp)
-        return parsed if isinstance(parsed, dict) else {}
+        resp = await _chat(_PERSONA_PROMPT, text)
+        return resp.strip()
     except Exception as e:
         print(f"[extract_persona] failed: {e}")
-        return {}
+        return ""
 
 
 # --- Geocoding -------------------------------------------------------------
@@ -137,29 +135,27 @@ async def maybe_geocode(extracted):
 
 # --- Agent mutations ------------------------------------------------------
 
-async def save_preferences(agent_id, new_prefs):
-    if not new_prefs:
+async def save_preferences(agent_id: str, new_pref: str) -> None:
+    if not new_pref:
         return
     now = datetime.now(timezone.utc).isoformat()
-    timestamped = {
-        k: ({**v, "updated_at": now} if isinstance(v, dict) else {"value": v, "updated_at": now})
-        for k, v in new_prefs.items()
-    }
 
     def mutate(agent):
-        agent.setdefault("preferences", {}).update(timestamped)
+        current = agent.get("preferences") or ""
+        agent["preferences"] = (current + "\n" + new_pref).strip() if current else new_pref
         agent["updated_at"] = now
 
     await store.update_agent(agent_id, mutate)
 
 
-async def save_persona(agent_id, new_persona):
+async def save_persona(agent_id: str, new_persona: str) -> None:
     if not new_persona:
         return
     now = datetime.now(timezone.utc).isoformat()
 
     def mutate(agent):
-        agent.setdefault("persona", {}).update(new_persona)
+        current = agent.get("persona") or ""
+        agent["persona"] = (current + "\n" + new_persona).strip() if current else new_persona
         agent["updated_at"] = now
 
     await store.update_agent(agent_id, mutate)

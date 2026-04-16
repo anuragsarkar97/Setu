@@ -15,8 +15,8 @@ async def create_agent(body: dict = Body(...)):
     doc = {
         "agent_id": str(uuid.uuid4()),
         "name": body.get("name", "unnamed"),
-        "preferences": body.get("preferences", {}),
-        "persona": body.get("persona", {}),
+        "preferences": body.get("preferences", ""),
+        "persona": body.get("persona", ""),
         "created_at": now,
         "updated_at": now,
     }
