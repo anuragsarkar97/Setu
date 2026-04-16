@@ -113,19 +113,19 @@ async def check_clarification(
     On Pass 2, previous_questions is passed so Claude can map answers correctly.
     Persona (stable facts) is included so the LLM never asks for known facts.
     """
-    context_parts = [f'Intent: "{text}"']
+    context_parts = [f'INTENTS: "{text}"']
     if persona:
         persona_str = _format_persona_for_prompt(persona)
         if persona_str:
-            context_parts.append(f"Who they are: {persona_str}")
+            context_parts.append(f"PERSONA: {persona_str}")
     if preferences:
-        context_parts.append(f"Background: {_format_prefs_for_prompt(preferences)}")
-    if previous_questions and answers:
-        context_parts.append(f"Previous questions: \"{' '.join(previous_questions)}\"")
-        context_parts.append(f"User answered: \"{answers}\"")
-    elif answers:
-        context_parts.append(f"User answered: \"{answers}\"")
+        context_parts.append(f"Preferences: {_format_prefs_for_prompt(preferences)}")
 
+    '''
+    INTENTS: I have been working in the corporate world for long time, and now I am feeling a lot, lonely in my life.
+    PERSONA: None 
+    Preferences: None
+    '''
     response = await _chat(_CLARIFICATION_SYSTEM_PROMPT, "\n".join(context_parts))
 
     if not response or response.lower().startswith("(empty"):
@@ -310,6 +310,9 @@ async def _run_pipeline(
 
 
 # --- Routes ---------------------------------------------------------------
+
+@router.post("")
+
 
 @router.post("", status_code=201)
 async def create_intent(body: dict = Body(...)):
