@@ -1,19 +1,23 @@
 """
-Chat loop with tool calling.
+Chat loop with a single tool: `route_intent`.
 
-Conceptually this is an MCP-server-to-Claude shape, but using OpenAI's
-function-calling API. The LLM drives the conversation and decides when to
-invoke `search_intents` or `create_intent`. We persist the user/assistant
-turns in the JSON store; tool messages are transient per request.
+MCP-style layering:
+    chat LLM  ←→  route_intent (tool)  →  intent router (orchestrator)
+
+The chat LLM speaks to the user. It forwards the user's message to the
+tool, which calls the intent router (the same code that powers
+`POST /api/intent/route`). The router decides between clarify / create+search
+/ respond, and the chat LLM turns that structured response into natural
+conversation.
 
 Public entrypoint:
 
     await run_chat(agent_id, user_message, conversation_id=None)
         -> {
              conversation_id,
-             reply,                  # natural-language assistant reply
-             tool_events,            # compact trace for the UI
-             highlight_intent_ids,   # map-highlighting hints
+             reply,
+             tool_events,
+             highlight_intent_ids,
            }
 """
 import json
@@ -25,7 +29,7 @@ from pathlib import Path
 from openai import AsyncOpenAI
 
 import store
-from utils.chat_tools import tool_create_intent, tool_search_intents
+from utils.chat_tools import tool_route_intent
 from utils.clarify import MODEL
 
 _openai = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
@@ -33,54 +37,36 @@ _SYSTEM_PROMPT = (
     Path(__file__).parent.parent / "llm" / "chat_system_prompt.md"
 ).read_text().strip()
 
-# Tool schemas (OpenAI function-calling shape) ------------------------------
 TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "search_intents",
+            "name": "route_intent",
             "description": (
-                "Search the bulletin for existing intents matching a natural-"
-                "language query. Use when the user is looking, discovering, "
-                "browsing, or comparing. Excludes the user's own intents."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query":     {"type": "string",  "description": "Natural-language search query."},
-                    "top_n":     {"type": "integer", "description": "Max results. Default 5.", "default": 5},
-                    "threshold": {"type": "number",  "description": "Min cosine similarity 0-1. Default 0.5.", "default": 0.5},
-                },
-                "required": ["query"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "create_intent",
-            "description": (
-                "Post a new intent on behalf of the user. Use when the user is "
-                "stating something that's theirs to post. May return "
-                "'needs_clarification' with questions to ask — in that case, "
-                "ask the user those questions, then call this tool again with "
-                "the same `text`, plus `answers` and `previous_questions`."
+                "Forward the user's message to the intent router. The router "
+                "is a separate agent that decides whether to CLARIFY (ask the "
+                "user more questions), CREATE AND SEARCH (post the intent and "
+                "return matches), or RESPOND (conversational reply). Call this "
+                "for every user message that isn't pure greeting / small talk. "
+                "Pass the user's text verbatim — do NOT interpret or rewrite. "
+                "If the router previously asked clarifying questions, include "
+                "them in `previous_questions` and the user's reply in `answers`."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "text": {
                         "type": "string",
-                        "description": "The user's intent as a single sentence.",
+                        "description": "The user's intent text, verbatim.",
                     },
                     "answers": {
                         "type": "string",
-                        "description": "The user's reply to a previous clarification, if any.",
+                        "description": "If the router asked clarification on the previous turn, the user's reply.",
                     },
                     "previous_questions": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "The questions asked on the previous clarification turn, if any.",
+                        "description": "The clarification questions from the previous turn.",
                     },
                 },
                 "required": ["text"],
@@ -89,12 +75,8 @@ TOOLS = [
     },
 ]
 
-_TOOL_IMPLS = {
-    "search_intents": tool_search_intents,
-    "create_intent":  tool_create_intent,
-}
-
-_MAX_TOOL_LOOPS = 4  # safety rail against runaway tool-calling
+_TOOL_IMPLS = {"route_intent": tool_route_intent}
+_MAX_TOOL_LOOPS = 4
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +114,6 @@ async def run_chat(
                 "highlight_intent_ids": _dedup(highlight_ids),
             }
 
-        # Echo the assistant message (with tool_calls) back into the thread
         messages.append({
             "role":    "assistant",
             "content": msg.content or "",
@@ -161,18 +142,20 @@ async def run_chat(
             else:
                 try:
                     result = await fn(agent_id=agent_id, **args)
-                except TypeError as e:          # bad args shape
+                except TypeError as e:
                     result = {"error": f"bad_args: {e}"}
                 except Exception as e:
                     result = {"error": str(e)}
 
-            # Collect map highlights
-            if name == "search_intents" and isinstance(result.get("matches"), list):
-                highlight_ids.extend(m.get("intent_id") for m in result["matches"] if m.get("intent_id"))
-            if name == "create_intent" and result.get("status") == "created":
-                iid = (result.get("intent") or {}).get("intent_id")
-                if iid:
-                    highlight_ids.append(iid)
+            # Collect map highlights based on the router's action
+            if isinstance(result, dict):
+                if result.get("action") == "created":
+                    iid = (result.get("intent") or {}).get("intent_id")
+                    if iid:
+                        highlight_ids.append(iid)
+                    for m in result.get("matches", []) or []:
+                        if m.get("intent_id"):
+                            highlight_ids.append(m["intent_id"])
 
             tool_events.append({
                 "tool":   name,
@@ -187,7 +170,6 @@ async def run_chat(
                 "content":      json.dumps(result, default=str),
             })
 
-    # Hit the loop budget — return gracefully
     fallback = "hmm — i got tangled trying that. can you say it again?"
     conv["turns"].append({"role": "assistant", "content": fallback})
     await store.save_conversation(conv)
@@ -236,18 +218,21 @@ def _seed_messages(conv: dict, agent_id: str) -> list:
 
 
 def _compact(result):
-    """Slim version of the tool result for the UI trace (no embeddings, etc.)."""
+    """Slim tool-result payload for the UI (no embeddings, etc.)."""
     if not isinstance(result, dict):
         return {"value": str(result)[:200]}
+
     out = {}
     for k, v in result.items():
-        if k in ("matches", "nearby_matches") and isinstance(v, list):
+        if k == "matches" and isinstance(v, list):
             out[k] = [
-                {kk: m.get(kk) for kk in ("intent_id", "intent_type", "text", "score", "location", "tags") if kk in m}
+                {kk: m.get(kk) for kk in ("intent_id", "intent_type", "text", "location", "tags", "score", "rerank_score") if kk in m}
                 for m in v
             ]
         elif k == "intent" and isinstance(v, dict):
-            out[k] = {kk: v.get(kk) for kk in ("intent_id", "intent_type", "summary", "location", "tags")}
+            out[k] = {kk: v.get(kk) for kk in ("intent_id", "intent_type", "summary", "location", "tags") if kk in v}
+        elif k == "questions" and isinstance(v, list):
+            out[k] = v
         else:
             out[k] = v
     return out

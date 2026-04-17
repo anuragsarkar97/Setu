@@ -42,7 +42,7 @@ export default function ChatPanel({ agentId, onResults, onIntentCreated }) {
       onResults?.(res.highlight_intent_ids || [])
 
       const created = (res.tool_events || []).find(
-        (ev) => ev.tool === 'create_intent' && ev.result?.status === 'created'
+        (ev) => ev.tool === 'route_intent' && ev.result?.action === 'created'
       )
       if (created) onIntentCreated?.(created.result.intent)
     } catch (err) {
@@ -124,22 +124,32 @@ function MessageRow({ m }) {
   }
   if (m.role === 'tool') {
     const e = m.event
-    const icon = e.tool === 'search_intents' ? '🔍' : e.tool === 'create_intent' ? '📌' : '•'
+    const r = e.result || {}
+    let icon = '•'
     let label = e.tool
-    if (e.tool === 'search_intents') {
-      const n = e.result?.match_count ?? (e.result?.matches?.length ?? 0)
-      const q = e.args?.query || ''
-      label = `searched "${q}" — ${n} ${n === 1 ? 'match' : 'matches'}`
-    } else if (e.tool === 'create_intent') {
-      if (e.result?.status === 'created') {
-        const t = e.result?.intent?.summary || e.result?.intent?.text || 'intent'
-        label = `posted: ${t}`
-      } else if (e.result?.error) {
-        label = `couldn't post: ${e.result.error}`
+
+    if (e.tool === 'route_intent') {
+      const action = r.action
+      const q = e.args?.text || ''
+      if (action === 'clarify') {
+        icon = '❓'
+        label = `router asked for more on "${q}"`
+      } else if (action === 'created') {
+        icon = '📌'
+        const n = Array.isArray(r.matches) ? r.matches.length : 0
+        const summary = r.intent?.summary || r.intent?.text || q
+        label = `posted "${truncate(summary, 70)}" · ${n} ${n === 1 ? 'match' : 'matches'}`
+      } else if (action === 'responded') {
+        icon = '💬'
+        label = 'router replied directly'
+      } else if (r.error) {
+        icon = '⚠'
+        label = `router error: ${r.error}`
       } else {
-        label = 'creating intent…'
+        label = `routed "${truncate(q, 70)}"`
       }
     }
+
     return (
       <div className="msg msg--tool" data-testid={`tool-event-${e.tool}`}>
         <span className="msg__tool-icon">{icon}</span>
@@ -148,4 +158,9 @@ function MessageRow({ m }) {
     )
   }
   return null
+}
+
+function truncate(s, n) {
+  if (!s) return ''
+  return s.length > n ? s.slice(0, n - 1) + '…' : s
 }
