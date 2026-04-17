@@ -9,10 +9,20 @@ export default function ChatPanel({ agentId, onResults, onIntentCreated }) {
   ])
   const [draft, setDraft]     = useState('')
   const [sending, setSending] = useState(false)
-  const [convId, setConvId]   = useState(
-    () => localStorage.getItem('setu_conversation_id') || null
+  // conversation is scoped to this agent — a different ?agent_id= in the URL
+  // gets its own conversation thread
+  const convKey = agentId ? `setu_conv_${agentId}` : null
+  const [convId, setConvId] = useState(
+    () => (convKey && localStorage.getItem(convKey)) || null
   )
   const threadRef = useRef(null)
+
+  // when the agentId changes (URL changed), pick up that agent's conversation
+  useEffect(() => {
+    if (!convKey) { setConvId(null); return }
+    setConvId(localStorage.getItem(convKey) || null)
+    setMessages([{ role: 'assistant', content: GREETING }])
+  }, [convKey])
 
   useEffect(() => {
     const el = threadRef.current
@@ -31,7 +41,7 @@ export default function ChatPanel({ agentId, onResults, onIntentCreated }) {
     try {
       const res = await sendChat({ agentId, message: msg, conversationId: convId })
       setConvId(res.conversation_id)
-      localStorage.setItem('setu_conversation_id', res.conversation_id)
+      if (convKey) localStorage.setItem(convKey, res.conversation_id)
 
       setMessages((m) => [
         ...m,
@@ -56,7 +66,7 @@ export default function ChatPanel({ agentId, onResults, onIntentCreated }) {
   }
 
   const resetConversation = () => {
-    localStorage.removeItem('setu_conversation_id')
+    if (convKey) localStorage.removeItem(convKey)
     setConvId(null)
     setMessages([{ role: 'assistant', content: GREETING }])
     onResults?.([])
