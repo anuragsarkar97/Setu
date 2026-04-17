@@ -7,7 +7,7 @@ import uvicorn
 from fastapi import FastAPI
 
 import store
-from routers import agents, intent_router
+from routers import agents, chat, intent_router
 
 
 @asynccontextmanager
@@ -28,6 +28,7 @@ app = FastAPI(
 app.include_router(agents.router)
 app.include_router(intent_router.router)
 app.include_router(intent_router.intents_router)
+app.include_router(chat.router)
 
 
 @app.get("/api/health")

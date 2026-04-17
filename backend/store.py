@@ -14,7 +14,7 @@ from typing import Any, Callable
 
 _PATH = Path(__file__).parent / "data" / "store.json"
 _LOCK = asyncio.Lock()
-_DATA: dict[str, Any] = {"agents": {}, "intents": {}}
+_DATA: dict[str, Any] = {"agents": {}, "intents": {}, "conversations": {}}
 _LOADED = False
 
 
@@ -32,6 +32,7 @@ def _load() -> None:
         _DATA = json.loads(_PATH.read_text())
     _DATA.setdefault("agents", {})
     _DATA.setdefault("intents", {})
+    _DATA.setdefault("conversations", {})
     _LOADED = True
 
 
@@ -85,3 +86,18 @@ async def save_intent(intent: dict) -> None:
     async with _LOCK:
         _DATA["intents"][intent["intent_id"]] = intent
         await _flush()
+
+
+# --- Conversations ---------------------------------------------------------
+
+def get_conversation(conversation_id: str) -> dict | None:
+    _load()
+    return _DATA["conversations"].get(conversation_id)
+
+
+async def save_conversation(conv: dict) -> None:
+    _load()
+    async with _LOCK:
+        _DATA["conversations"][conv["conversation_id"]] = conv
+        await _flush()
+

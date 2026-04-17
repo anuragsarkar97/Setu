@@ -1,3 +1,3 @@
-from routers import agents, intent_router
+from routers import agents, chat, intent_router
 
-__all__ = ["agents", "intent_router"]
+__all__ = ["agents", "chat", "intent_router"]

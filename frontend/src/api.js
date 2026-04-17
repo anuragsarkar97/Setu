@@ -8,9 +8,20 @@ async function req(path, opts = {}) {
 
 export const fetchIntents = () => req('/api/intents')
 
-export const searchIntents = (query, topN = 25) =>
-  req('/api/intent/search', {
+export const createAgent = (name) =>
+  req('/api/agents', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, top_n: topN, threshold: 0.25 }),
+    body: JSON.stringify({ name }),
+  })
+
+export const sendChat = ({ agentId, message, conversationId }) =>
+  req('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      agent_id: agentId,
+      message,
+      conversation_id: conversationId || undefined,
+    }),
   })
