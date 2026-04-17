@@ -5,7 +5,7 @@
 # Or add to Claude Desktop claude_desktop_config.json:
 # {
 #   "mcpServers": {
-#     "sangam": {
+#     "setu": {
 #       "command": "python",
 #       "args": ["/path/to/mcp-server/server.py"]
 #     }
@@ -23,12 +23,12 @@ from client import (
     ack_match,
 )
 
-mcp = FastMCP("sangam")
+mcp = FastMCP("setu")
 
 
 @mcp.tool()
 async def intent_post(text: str) -> str:
-    """Post an intent to Sangam. Use this when the user wants to offer or request something.
+    """Post an intent to Setu. Use this when the user wants to offer or request something.
 
     STEP 1 — ENRICH BEFORE CALLING:
     Before calling this tool, silently fold in everything you already know from the
@@ -57,7 +57,7 @@ async def intent_post(text: str) -> str:
        into one rich sentence.
     4. The intent is created only when needs_clarification=false is returned.
 
-    Use sangam_search if the user only wants to browse without posting.
+    Use setu_search if the user only wants to browse without posting.
     """
     try:
         # 1. Clarify first — never post until all critical fields are present
@@ -70,9 +70,9 @@ async def intent_post(text: str) -> str:
                 "posted": False,
                 "instruction": (
                     "Ask the user ALL of these questions in one message. "
-                    "Wait for ALL answers before calling sangam_post again. "
+                    "Wait for ALL answers before calling setu_post again. "
                     "When you call again, combine the original intent + all answers into one natural sentence. "
-                    "Do NOT call sangam_post again until you have all the answers."
+                    "Do NOT call setu_post again until you have all the answers."
                 ),
             })
 
@@ -113,7 +113,7 @@ async def intent_search(
     lon: float = 0.0,
     radius_km: float = 30.0,
 ) -> str:
-    """Search Sangam for intents matching your query. Use natural language.
+    """Search Setu for intents matching your query. Use natural language.
 
     Enrich the query from conversation context before calling — include location,
     timing, or budget the user already mentioned. A richer query returns better matches.
@@ -148,7 +148,7 @@ async def intent_search(
 
 @mcp.tool()
 async def intent_status() -> str:
-    """Check recent intents posted to Sangam.
+    """Check recent intents posted to Setu.
 
     Returns the most recent intents from all users.
     This is the discovery feed — browse what's out there.
@@ -165,7 +165,7 @@ async def intent_ack(match_id: str) -> str:
     """Accept a match. If the other person also accepts, a chat room opens.
 
     Args:
-        match_id: The match ID from sangam_status
+        match_id: The match ID from setu_status
 
     Note: Match acknowledgement is not yet available — coming soon.
     """

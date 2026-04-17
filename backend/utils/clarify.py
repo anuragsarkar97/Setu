@@ -95,7 +95,7 @@ async def save_persona(agent_id: str, new_persona: str) -> None:
 
 
 _PERSONA_REFRESH_PROMPT = """\
-You maintain a concise persona profile for a user of Sangam — an anonymous people-matching platform.
+You maintain a concise persona profile for a user of Setu — an anonymous people-matching platform.
 
 Given the user's CURRENT PERSONA and a NEW INTENT they just posted, produce an UPDATED PERSONA.
 

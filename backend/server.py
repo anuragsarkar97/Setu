@@ -27,6 +27,7 @@ app = FastAPI(
 
 app.include_router(agents.router)
 app.include_router(intent_router.router)
+app.include_router(intent_router.intents_router)
 
 
 @app.get("/api/health")

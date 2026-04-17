@@ -24,6 +24,7 @@ from geocode import geocode as geocode_location
 from llm.api import openai_client
 
 router = APIRouter(prefix="/api/intent", tags=["intent-router"])
+intents_router = APIRouter(prefix="/api/intents", tags=["intents"])
 
 ROUTER_PROMPT = (Path(__file__).parent.parent / "llm" / "router_prompt.md").read_text().strip()
 
@@ -172,6 +173,34 @@ async def search_intents(body: dict = Body(...)):
 
     matches = await search_by_text(query, {}, agent_id, top_n, threshold)
     return {"query": query, "matches": matches}
+
+
+@intents_router.get("")
+async def list_intents():
+    """
+    Public list of active intents — pruned for client consumption.
+    Strips embeddings and preferences_snapshot (which can leak PII / bloat).
+    Includes lat/lng where geocoded so the frontend can pin them on the map.
+
+    Full path: GET /api/intents
+    """
+    out = []
+    for i in store.all_intents():
+        if i.get("status") != "active":
+            continue
+        ext = i.get("extracted") or {}
+        out.append({
+            "intent_id":   i["intent_id"],
+            "text":        i.get("text", ""),
+            "summary":     ext.get("summary", "") or "",
+            "intent_type": ext.get("intent_type", "") or "",
+            "location":    ext.get("location_query", "") or "",
+            "lat":         ext.get("lat"),
+            "lng":         ext.get("lng"),
+            "tags":        ext.get("tags") or [],
+            "created_at":  i.get("created_at"),
+        })
+    return out
 
 
 def _fmt_intent(doc: dict) -> dict:

@@ -1,7 +1,5 @@
 """
-Async HTTP client for the Sangam MCP server.
-
-Targets the backend at /Users/angsak/Desktop/sangam/backend.
+Async HTTP client for the Setu MCP server.
 Auth is optional — if no credentials file exists, requests are sent unauthenticated.
 """
 import os
@@ -13,7 +11,7 @@ BASE_URL = get_coordinator_url()
 
 def _get_user_id() -> str:
     """Resolve user_id from env → config → fallback."""
-    uid = os.environ.get("SANGAM_USER_ID", "").strip()
+    uid = os.environ.get("SETU_USER_ID", "").strip()
     if uid:
         return uid
     if CONFIG_PATH.exists():

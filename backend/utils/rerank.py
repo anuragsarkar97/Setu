@@ -19,7 +19,7 @@ from llm.api import openai_client
 from utils.clarify import MODEL
 
 _SYSTEM = """\
-You are a compatibility ranker for a people-matching platform called Sangam.
+You are a compatibility ranker for a people-matching platform called Setu.
 
 You receive one SOURCE intent and a list of CANDIDATE intents.
 Your job: rank candidates by mutual compatibility with the source — how well would

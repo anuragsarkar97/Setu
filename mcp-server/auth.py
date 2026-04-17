@@ -1,7 +1,7 @@
 """
-Credential management and token refresh for the Sangam MCP server.
+Credential management and token refresh for the setu MCP server.
 
-Credentials are stored at ~/.sangam/credentials.json and shared by the
+Credentials are stored at ~/.setu/credentials.json and shared by the
 daemon, CLI, and MCP server.
 """
 import json
@@ -20,7 +20,7 @@ def load_credentials() -> dict:
     if not CREDENTIALS_PATH.exists():
         raise FileNotFoundError(
             f"No credentials found at {CREDENTIALS_PATH}. "
-            "Run: sangam register"
+            "Run: setu register"
         )
     return json.loads(CREDENTIALS_PATH.read_text())
 
@@ -60,7 +60,7 @@ async def get_valid_token() -> str:
     if is_expired(creds.get("expires_at", "")):
         refresh_token = creds.get("refresh_token")
         if not refresh_token:
-            raise RuntimeError("No refresh token available. Run: sangam login")
+            raise RuntimeError("No refresh token available. Run: setu login")
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"{get_coordinator_url()}/auth/refresh",
