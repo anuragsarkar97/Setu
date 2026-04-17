@@ -141,7 +141,8 @@ async def run_chat(
                 result = {"error": f"unknown_tool:{name}"}
             else:
                 try:
-                    result = await fn(agent_id=agent_id, **args)
+                    # `conversation` is injected from the chat loop — not an LLM arg
+                    result = await fn(agent_id=agent_id, conversation=conv, **args)
                 except TypeError as e:
                     result = {"error": f"bad_args: {e}"}
                 except Exception as e:
