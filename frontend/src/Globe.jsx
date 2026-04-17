@@ -10,6 +10,8 @@ export default function Globe({ intents, highlightedIds, selectedId, onSelect, f
   const containerRef = useRef(null)
   const mapRef       = useRef(null)
   const markersRef   = useRef(new Map()) // intent_id -> marker
+  const popupRef     = useRef(null)      // single reusable popup
+  const intentsRef   = useRef([])        // latest intents for popup lookup
 
   // init map once
   useEffect(() => {
@@ -45,6 +47,7 @@ export default function Globe({ intents, highlightedIds, selectedId, onSelect, f
 
   // sync markers when intents change
   useEffect(() => {
+    intentsRef.current = intents
     const map = mapRef.current
     if (!map) return
 
@@ -88,7 +91,7 @@ export default function Globe({ intents, highlightedIds, selectedId, onSelect, f
     }
   }, [highlightedIds, selectedId, intents])
 
-  // fly-to behaviour (flyToId pattern: "<id>::<counter>" so same id can re-fly)
+  // fly-to + popup (flyToId pattern: "<id>::<counter>" so same id can re-fly)
   useEffect(() => {
     if (!flyToId) return
     const realId = String(flyToId).split('::')[0]
@@ -102,6 +105,38 @@ export default function Globe({ intents, highlightedIds, selectedId, onSelect, f
       curve: 1.4,
       essential: true,
     })
+
+    // Show popup for this intent
+    const intent = intentsRef.current.find((i) => i.intent_id === realId)
+    if (!intent) return
+
+    if (popupRef.current) popupRef.current.remove()
+
+    const escape = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]
+    ))
+    const tags = (intent.tags || []).slice(0, 4)
+      .map((t) => `<span class="popup__tag">${escape(t)}</span>`).join('')
+    const html = `
+      <div class="popup">
+        <div class="popup__top">
+          <span class="popup__type">${escape(intent.intent_type || 'other')}</span>
+          ${intent.location ? `<span class="popup__loc">📍 ${escape(intent.location)}</span>` : ''}
+        </div>
+        <div class="popup__text">${escape(intent.summary || intent.text || '')}</div>
+        ${tags ? `<div class="popup__tags">${tags}</div>` : ''}
+      </div>`
+
+    popupRef.current = new maplibregl.Popup({
+      offset: 18,
+      closeButton: true,
+      closeOnClick: true,
+      maxWidth: '320px',
+      className: 'intent-popup',
+    })
+      .setLngLat([ll.lng, ll.lat])
+      .setHTML(html)
+      .addTo(mapRef.current)
   }, [flyToId])
 
   return <div ref={containerRef} className="globe" />

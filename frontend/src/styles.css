@@ -271,3 +271,61 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   border-radius: 2px;
   letter-spacing: 0.5px;
 }
+
+/* ─── map popup ─── */
+.intent-popup .maplibregl-popup-tip { border-top-color: #0d1628; border-bottom-color: #0d1628; }
+.intent-popup .maplibregl-popup-content {
+  background: #0d1628;
+  color: #dbe4f0;
+  border: 1px solid #1a2540;
+  border-radius: 6px;
+  padding: 12px 14px 10px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.6), 0 0 0 1px #06d6a040;
+  font-family: inherit;
+}
+.intent-popup .maplibregl-popup-close-button {
+  color: #5a6a85;
+  font-size: 18px;
+  padding: 2px 6px;
+  right: 2px;
+  top: 0;
+}
+.intent-popup .maplibregl-popup-close-button:hover { color: #ef476f; background: transparent; }
+.popup__top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  gap: 10px;
+}
+.popup__type {
+  font-size: 10px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #ef476f;
+  background: #ef476f1a;
+  padding: 3px 8px;
+  border-radius: 2px;
+}
+.popup__loc {
+  font-size: 11px;
+  color: #8a9ab5;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.popup__text {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #dbe4f0;
+  margin-bottom: 6px;
+}
+.popup__tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.popup__tag {
+  background: #1a2540;
+  color: #8a9ab5;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 2px;
+}
