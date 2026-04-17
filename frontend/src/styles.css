@@ -64,14 +64,23 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   background: transparent;
   color: #8a9ab5;
   border: 1px solid #1a2540;
-  padding: 4px 10px;
-  border-radius: 3px;
-  font-size: 10px;
-  letter-spacing: 2px;
-  text-transform: uppercase;
-  transition: color 120ms ease, border-color 120ms ease;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: color 120ms ease, border-color 120ms ease, transform 200ms ease;
 }
-.chat__reset:hover { color: #ffd166; border-color: #ffd166; }
+.chat__reset:hover {
+  color: #ffd166;
+  border-color: #ffd166;
+  transform: rotate(-90deg);
+}
+.chat__reset:active {
+  transform: rotate(-180deg);
+}
 
 /* ───────── thread ───────── */
 .chat__thread {

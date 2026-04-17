@@ -78,16 +78,18 @@ export default function ChatPanel({ agentId, onResults, onIntentCreated }) {
         <div className="chat__brand">Setu</div>
         <div className="chat__header-right">
           <div className="chat__hint">talk to the bulletin</div>
-          {convId && (
-            <button
-              className="chat__reset"
-              onClick={resetConversation}
-              data-testid="chat-reset-btn"
-              title="Start a new conversation"
-            >
-              new
-            </button>
-          )}
+          <button
+            className="chat__reset"
+            onClick={resetConversation}
+            data-testid="chat-reset-btn"
+            title="Clear conversation and start fresh"
+            aria-label="Clear conversation"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M3 12a9 9 0 1 0 3-6.7" />
+              <path d="M3 4v5h5" />
+            </svg>
+          </button>
         </div>
       </header>
 
