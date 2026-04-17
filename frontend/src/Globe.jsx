@@ -18,8 +18,8 @@ export default function Globe({ intents, highlightedIds, selectedId, onSelect, f
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: STYLE_URL,
-      center: [20, 15],
-      zoom: 1.3,
+      center: [78.9629, 22.5937],   // India
+      zoom: 4.2,
       attributionControl: { compact: true },
     })
 
